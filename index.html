@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cursor Movement</title>
+    <style>
+        canvas {
+            background-color: white;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="300" height="300"></canvas>
+    <div id="coordinates"></div>
+    <script>
+        const socket = new WebSocket('ws://' + window.location.host + '/ws');
+        let grid = Array.from({ length: 30 }, () => Array(30).fill(null));
+        let x = 0;
+        let y = 0;
+        let color = 'red';
+        let cursors = {};
+
+        socket.onopen = function() {
+            console.log("WebSocket connection established");
+        };
+
+        socket.onerror = function(error) {
+            console.log("WebSocket error:", error);
+        };
+
+        socket.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            grid = message.grid;
+            cursors = message.cursors;
+            draw();
+        };
+
+        document.addEventListener('DOMContentLoaded', (event) => {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const coordinatesDiv = document.getElementById('coordinates');
+            const squareSize = 10;
+
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'black';
+                ctx.font = '10px monospace';
+                for (let i = 0; i < 30; i++) {
+                    for (let j = 0; j < 30; j++) {
+                        if (grid[i][j]) {
+                            ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
+                        }
+                    }
+                }
+                for (const key in cursors) {
+                    const cursor = cursors[key];
+                    ctx.fillStyle = cursor.color;
+                    ctx.fillRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+                    ctx.strokeStyle = 'black';
+                    ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+                }
+                coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+            }
+
+            function gameLoop() {
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key.length === 1) {
+                    grid[x][y] = event.key;
+                    x = Math.min(29, x + 1);
+                } else {
+                    switch(event.key) {
+                        case "ArrowUp":
+                            y = Math.max(0, y - 1);
+                            break;
+                        case "ArrowDown":
+                            y = Math.min(29, y + 1);
+                            break;
+                        case "ArrowLeft":
+                            x = Math.max(0, x - 1);
+                            break;
+                        case "ArrowRight":
+                            x = Math.min(29, x + 1);
+                            break;
+                        case "Backspace":
+                            if (x > 0) {
+                                x = Math.max(0, x - 1);
+                                grid[x][y] = null;
+                            }
+                            break;
+                        case "Escape":
+                            fetch('/shutdown', { method: 'POST' });
+                            break;
+                    }
+                }
+                socket.send(JSON.stringify({ grid, x, y, color }));
+            });
+
+            gameLoop();
+        });
+    </script>
+</body>
+</html>
