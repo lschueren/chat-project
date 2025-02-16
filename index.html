@@ -3,21 +3,40 @@
 <head>
     <title>Cursor Movement</title>
     <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
         canvas {
             background-color: white;
+            border: 1px solid black;
+        }
+        #coordinates, #connectedClients {
+            margin-top: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
-    <canvas id="canvas" width="300" height="300"></canvas>
-    <div id="coordinates"></div>
+    <canvas id="canvas" width="500" height="500"></canvas>
+    <div id="coordinates">Cursor Coordinates: (0, 0)</div>
+    <div id="connectedClients">Connected Clients: 0</div>
     <script>
         const socket = new WebSocket('ws://' + window.location.host + '/ws');
-        let grid = Array.from({ length: 30 }, () => Array(30).fill(null));
+        let grid = Array.from({ length: 50 }, () => Array(50).fill(null));
         let x = 0;
         let y = 0;
         let color = 'red';
         let cursors = {};
+        let moveInterval;
+        let currentDirection = null;
+        const speed = 50; // Speed variable to control the interval duration
 
         socket.onopen = function() {
             console.log("WebSocket connection established");
@@ -29,8 +48,9 @@
 
         socket.onmessage = function(event) {
             const message = JSON.parse(event.data);
-            grid = message.grid;
-            cursors = message.cursors;
+            grid = message.grid || grid;
+            cursors = message.cursors || cursors;
+            document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
             draw();
         };
 
@@ -44,8 +64,8 @@
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.fillStyle = 'black';
                 ctx.font = '10px monospace';
-                for (let i = 0; i < 30; i++) {
-                    for (let j = 0; j < 30; j++) {
+                for (let i = 0; i < 50; i++) {
+                    for (let j = 0; j < 50; j++) {
                         if (grid[i][j]) {
                             ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
                         }
@@ -66,36 +86,49 @@
                 requestAnimationFrame(gameLoop);
             }
 
-            document.addEventListener('keydown', (event) => {
-                if (event.key.length === 1) {
-                    grid[x][y] = event.key;
-                    x = Math.min(29, x + 1);
-                } else {
-                    switch(event.key) {
+            function startMoving(direction) {
+                if (moveInterval) clearInterval(moveInterval);
+                moveInterval = setInterval(() => {
+                    switch(direction) {
                         case "ArrowUp":
                             y = Math.max(0, y - 1);
                             break;
                         case "ArrowDown":
-                            y = Math.min(29, y + 1);
+                            y = Math.min(49, y + 1);
                             break;
                         case "ArrowLeft":
                             x = Math.max(0, x - 1);
                             break;
                         case "ArrowRight":
-                            x = Math.min(29, x + 1);
-                            break;
-                        case "Backspace":
-                            if (x > 0) {
-                                x = Math.max(0, x - 1);
-                                grid[x][y] = null;
-                            }
-                            break;
-                        case "Escape":
-                            fetch('/shutdown', { method: 'POST' });
+                            x = Math.min(49, x + 1);
                             break;
                     }
+                    socket.send(JSON.stringify({ grid, x, y, color }));
+                }, speed); // Use the speed variable to control the interval duration
+            }
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key.length === 1) {
+                    grid[x][y] = event.key;
+                    x = Math.min(49, x + 1);
+                    socket.send(JSON.stringify({ grid, x, y, color }));
+                } else if (event.key === "Backspace") {
+                    if (x > 0) {
+                        x = Math.max(0, x - 1);
+                        grid[x][y] = null;
+                        socket.send(JSON.stringify({ grid, x, y, color }));
+                    }
+                } else if (event.key.startsWith("Arrow") && event.key !== currentDirection) {
+                    currentDirection = event.key;
+                    startMoving(event.key);
                 }
-                socket.send(JSON.stringify({ grid, x, y, color }));
+            });
+
+            document.addEventListener('keyup', (event) => {
+                if (event.key === currentDirection) {
+                    clearInterval(moveInterval);
+                    currentDirection = null;
+                }
             });
 
             gameLoop();

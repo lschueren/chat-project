@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,15 +17,17 @@ var server *http.Server
 var upgrader = websocket.Upgrader{}
 var clients = make(map[*websocket.Conn]bool)
 var broadcast = make(chan Message)
-var grid = make([][]string, 30)
+var grid = make([][]string, 50)
 var cursors = make(map[*websocket.Conn]Cursor)
+var port = 8080
 
 type Message struct {
-	Grid    [][]string        `json:"grid"`
-	X       int               `json:"x"`
-	Y       int               `json:"y"`
-	Color   string            `json:"color"`
-	Cursors map[string]Cursor `json:"cursors"`
+	Grid             [][]string        `json:"grid"`
+	X                int               `json:"x"`
+	Y                int               `json:"y"`
+	Color            string            `json:"color"`
+	Cursors          map[string]Cursor `json:"cursors"`
+	ConnectedClients int               `json:"connectedClients"`
 }
 
 type Cursor struct {
@@ -35,8 +38,14 @@ type Cursor struct {
 
 func init() {
 	for i := range grid {
-		grid[i] = make([]string, 30)
+		grid[i] = make([]string, 50)
 	}
+	rand.Seed(time.Now().UnixNano())
+}
+
+func getRandomColor() string {
+	colors := []string{"blue", "yellow", "purple", "orange", "pink", "brown"}
+	return colors[rand.Intn(len(colors))]
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -47,20 +56,26 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	clients[conn] = true
+	broadcastClientCount()
 
-	color := "red"
-	if len(clients)%2 == 0 {
+	var color string
+	if len(clients) == 1 {
+		color = "red"
+	} else if len(clients) == 2 {
 		color = "green"
+	} else {
+		color = getRandomColor()
 	}
 	cursors[conn] = Cursor{X: 0, Y: 0, Color: color}
 
 	// Send initial state to the client
 	initialMessage := Message{
-		Grid:    grid,
-		X:       0,
-		Y:       0,
-		Color:   color,
-		Cursors: serializeCursors(cursors),
+		Grid:             grid,
+		X:                0,
+		Y:                0,
+		Color:            color,
+		Cursors:          serializeCursors(cursors),
+		ConnectedClients: len(clients),
 	}
 	err = conn.WriteJSON(initialMessage)
 	if err != nil {
@@ -68,6 +83,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		delete(clients, conn)
 		delete(cursors, conn)
+		broadcastClientCount()
 		return
 	}
 
@@ -78,6 +94,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("ReadJSON error:", err)
 			delete(clients, conn)
 			delete(cursors, conn)
+			broadcastClientCount()
 			break
 		}
 		grid = msg.Grid
@@ -90,6 +107,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func handleMessages() {
 	for {
 		msg := <-broadcast
+		msg.ConnectedClients = len(clients)
 		for client := range clients {
 			err := client.WriteJSON(msg)
 			if err != nil {
@@ -97,6 +115,7 @@ func handleMessages() {
 				client.Close()
 				delete(clients, client)
 				delete(cursors, client)
+				broadcastClientCount()
 			}
 		}
 	}
@@ -110,8 +129,23 @@ func serializeCursors(cursors map[*websocket.Conn]Cursor) map[string]Cursor {
 	return serialized
 }
 
+func broadcastClientCount() {
+	msg := Message{
+		ConnectedClients: len(clients),
+	}
+	for client := range clients {
+		err := client.WriteJSON(msg)
+		if err != nil {
+			fmt.Println("WriteJSON error:", err)
+			client.Close()
+			delete(clients, client)
+			delete(cursors, client)
+		}
+	}
+}
+
 func main() {
-	server = &http.Server{Addr: ":8080"}
+	server = &http.Server{Addr: fmt.Sprintf(":%d", port)}
 
 	http.HandleFunc("/ws", wsHandler)
 	http.Handle("/", http.FileServer(http.Dir("./")))
@@ -119,7 +153,7 @@ func main() {
 	go handleMessages()
 
 	go func() {
-		fmt.Println("Starting server at :8080")
+		fmt.Printf("Starting server at :%d\n", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("ListenAndServe(): %s\n", err)
 		}
