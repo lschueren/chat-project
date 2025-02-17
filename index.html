@@ -37,6 +37,7 @@
         let moveInterval;
         let currentDirection = null;
         const speed = 50; // Speed variable to control the interval duration
+        let currentTextColor = 'black'; // Add this with other global variables at the top
 
         socket.onopen = function() {
             console.log("WebSocket connection established");
@@ -51,8 +52,64 @@
             grid = message.grid || grid;
             cursors = message.cursors || cursors;
             document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
-            draw();
+            
+            if (message.bomb) {
+                triggerBombAnimation(message.bomb.color);
+            } else if (message.textColor !== undefined) {
+                currentTextColor = message.textColor;
+                draw();
+            } else {
+                draw();
+            }
         };
+
+        function draw(textColor = currentTextColor) { // Change default parameter to use currentTextColor
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const coordinatesDiv = document.getElementById('coordinates');
+            const squareSize = 10;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.font = '10px monospace';
+            
+            // Draw letters with specified color
+            for (let i = 0; i < 50; i++) {
+                for (let j = 0; j < 50; j++) {
+                    if (grid[i][j]) {
+                        ctx.fillStyle = textColor;
+                        ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
+                    }
+                }
+            }
+
+            // Draw cursors
+            for (const key in cursors) {
+                const cursor = cursors[key];
+                ctx.fillStyle = cursor.color;
+                ctx.fillRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+                ctx.strokeStyle = 'black';
+                ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+            }
+            coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+        }
+
+        function triggerBombAnimation(color) {
+            currentTextColor = color;
+            draw();
+            setTimeout(() => {
+                grid = Array.from({ length: 50 }, () => Array(50).fill(null));
+                currentTextColor = 'black';
+                draw();
+                // Send the cleared grid and color reset to the server
+                socket.send(JSON.stringify({ 
+                    grid, 
+                    x, 
+                    y, 
+                    color,
+                    textColor: 'black'
+                }));
+            }, 1000);
+        }
 
         document.addEventListener('DOMContentLoaded', (event) => {
             const canvas = document.getElementById('canvas');
@@ -60,29 +117,8 @@
             const coordinatesDiv = document.getElementById('coordinates');
             const squareSize = 10;
 
-            function draw() {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = 'black';
-                ctx.font = '10px monospace';
-                for (let i = 0; i < 50; i++) {
-                    for (let j = 0; j < 50; j++) {
-                        if (grid[i][j]) {
-                            ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
-                        }
-                    }
-                }
-                for (const key in cursors) {
-                    const cursor = cursors[key];
-                    ctx.fillStyle = cursor.color;
-                    ctx.fillRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
-                    ctx.strokeStyle = 'black';
-                    ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
-                }
-                coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-            }
-
             function gameLoop() {
-                draw();
+                draw(); // The draw function will use currentTextColor by default
                 requestAnimationFrame(gameLoop);
             }
 

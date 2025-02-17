@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,11 +27,19 @@ type Message struct {
 	X                int               `json:"x"`
 	Y                int               `json:"y"`
 	Color            string            `json:"color"`
+	TextColor        string            `json:"textColor,omitempty"`
 	Cursors          map[string]Cursor `json:"cursors"`
 	ConnectedClients int               `json:"connectedClients"`
+	Bomb             *Bomb             `json:"bomb,omitempty"`
 }
 
 type Cursor struct {
+	X     int    `json:"x"`
+	Y     int    `json:"y"`
+	Color string `json:"color"`
+}
+
+type Bomb struct {
 	X     int    `json:"x"`
 	Y     int    `json:"y"`
 	Color string `json:"color"`
@@ -40,7 +49,7 @@ func init() {
 	for i := range grid {
 		grid[i] = make([]string, 50)
 	}
-	rand.Seed(time.Now().UnixNano())
+	//rand.Seed(time.Now().UnixNano())
 }
 
 func getRandomColor() string {
@@ -97,10 +106,66 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			broadcastClientCount()
 			break
 		}
+
 		grid = msg.Grid
 		cursors[conn] = Cursor{X: msg.X, Y: msg.Y, Color: cursors[conn].Color} // Preserve the original color
 		msg.Cursors = serializeCursors(cursors)
 		broadcast <- msg
+
+		// Check for the #bomb sequence in the grid
+		if detectBombSequence(grid) {
+			fmt.Println("Bomb detected in the grid")
+			go handleBomb()
+		}
+	}
+}
+
+func detectBombSequence(grid [][]string) bool {
+	sequence := "#bomb"
+	// Check rows
+	for i := range grid {
+		row := strings.Join(grid[i], "")
+		fmt.Println("Checking row:", row) // Debugging statement
+		if strings.Contains(row, sequence) {
+			return true
+		}
+	}
+	// Check columns
+	for j := 0; j < len(grid[0]); j++ {
+		var column []string
+		for i := 0; i < len(grid); i++ {
+			column = append(column, grid[i][j])
+		}
+		columnStr := strings.Join(column, "")
+		fmt.Println("Checking column:", columnStr) // Debugging statement
+		if strings.Contains(columnStr, sequence) {
+			return true
+		}
+	}
+	return false
+}
+
+func handleBomb() {
+	// Color all letters red
+	broadcast <- Message{
+		Grid:      grid,
+		TextColor: "red",
+		Bomb:      &Bomb{Color: "red"},
+	}
+
+	// Wait for a second
+	time.Sleep(1 * time.Second)
+
+	// Clear the grid
+	for i := range grid {
+		for j := range grid[i] {
+			grid[i][j] = ""
+		}
+	}
+
+	// Broadcast the updated grid to all clients
+	broadcast <- Message{
+		Grid: grid,
 	}
 }
 
