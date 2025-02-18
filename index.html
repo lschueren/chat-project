@@ -46,13 +46,14 @@
             console.log("WebSocket error:", error);
         };
 
+        // Update the readFromServer function
         function readFromServer() {
             socket.onmessage = function(event) {
                 const message = JSON.parse(event.data);
                 grid = message.grid || grid;
                 cursors = message.cursors || cursors;
                 document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
-                draw(); // Ensure the canvas is updated with the latest data
+                // Remove draw() call from here
             };
         }
 
@@ -109,9 +110,10 @@
 
             handleUserInput();
 
+            // Make sure the gameLoop is the only place calling draw()
             function gameLoop() {
                 update();
-                draw();
+                draw(); // This is now the only place where draw() is called
                 requestAnimationFrame(gameLoop);
             }
 
@@ -144,6 +146,7 @@
             coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
         }
 
+        // Update startMoving function
         function startMoving(direction) {
             if (moveInterval) clearInterval(moveInterval);
             switch(direction) {
@@ -163,7 +166,7 @@
             cursors[socket.id] = { x, y, color };
             document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
             writeToServer();
-            draw();
+            // Remove draw() call from here
 
             moveInterval = setInterval(() => {
                 switch(direction) {
@@ -183,7 +186,7 @@
                 cursors[socket.id] = { x, y, color };
                 document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
                 writeToServer();
-                draw();
+                // Remove draw() call from here
             }, speed);
         }
     </script>
