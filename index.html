@@ -39,6 +39,11 @@
         const speed = 50; // Speed variable to control the interval duration
         let currentTextColor = 'black'; // Add this with other global variables at the top
 
+        // Add viewport variables
+        let viewportX = 0;
+        let viewportY = 0;
+        const viewportSize = 50;
+
         socket.onopen = function() {
             console.log("WebSocket connection established");
         };
@@ -63,7 +68,8 @@
             }
         };
 
-        function draw(textColor = currentTextColor) { // Change default parameter to use currentTextColor
+        // Modify the draw function to only show the viewport area
+        function draw(textColor = currentTextColor) {
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             const coordinatesDiv = document.getElementById('coordinates');
@@ -72,23 +78,30 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.font = '10px monospace';
             
-            // Draw letters with specified color
-            for (let i = 0; i < 50; i++) {
-                for (let j = 0; j < 50; j++) {
-                    if (grid[i][j]) {
+            // Only draw the visible portion of the grid
+            for (let i = 0; i < viewportSize; i++) {
+                for (let j = 0; j < viewportSize; j++) {
+                    const gridX = viewportX + i;
+                    const gridY = viewportY + j;
+                    if (grid[gridX] && grid[gridX][gridY]) {
                         ctx.fillStyle = textColor;
-                        ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
+                        ctx.fillText(grid[gridX][gridY], i * squareSize, j * squareSize + 10);
                     }
                 }
             }
 
-            // Draw cursors
+            // Update cursor positions relative to viewport
             for (const key in cursors) {
                 const cursor = cursors[key];
-                ctx.fillStyle = cursor.color;
-                ctx.fillRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
-                ctx.strokeStyle = 'black';
-                ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+                const relativeX = cursor.x - viewportX;
+                const relativeY = cursor.y - viewportY;
+                if (relativeX >= 0 && relativeX < viewportSize && 
+                    relativeY >= 0 && relativeY < viewportSize) {
+                    ctx.fillStyle = cursor.color;
+                    ctx.fillRect(relativeX * squareSize, relativeY * squareSize, squareSize, squareSize);
+                    ctx.strokeStyle = 'black';
+                    ctx.strokeRect(relativeX * squareSize, relativeY * squareSize, squareSize, squareSize);
+                }
             }
             coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
         }
@@ -164,6 +177,47 @@
                 if (event.key === currentDirection) {
                     clearInterval(moveInterval);
                     currentDirection = null;
+                }
+            });
+
+            // Add viewport movement with WASD keys
+            document.addEventListener('keydown', (event) => {
+                let moved = false;
+                switch(event.key.toLowerCase()) {
+                    case 'w':
+                        if (viewportY > 0) {
+                            viewportY--;
+                            moved = true;
+                        }
+                        break;
+                    case 's':
+                        if (viewportY < 950) {  // 1000 - viewportSize
+                            viewportY++;
+                            moved = true;
+                        }
+                        break;
+                    case 'a':
+                        if (viewportX > 0) {
+                            viewportX--;
+                            moved = true;
+                        }
+                        break;
+                    case 'd':
+                        if (viewportX < 950) {  // 1000 - viewportSize
+                            viewportX++;
+                            moved = true;
+                        }
+                        break;
+                }
+                if (moved) {
+                    socket.send(JSON.stringify({ 
+                        grid, 
+                        x, 
+                        y, 
+                        viewportX, 
+                        viewportY,
+                        color 
+                    }));
                 }
             });
 
