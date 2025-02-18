@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Cursor MMO</title>
+    <title>Cursor Movement</title>
     <style>
         body {
             display: flex;
@@ -34,13 +34,9 @@
         let y = 0;
         let color = 'red';
         let cursors = {};
-        let currentTextColor = 'black'; // Add this with other global variables at the top
-
-        // Add viewport variables
-        let viewportX = 0;
-        let viewportY = 0;
-        const viewportSize = 50;
-        const scrollMargin = 10;
+        let moveInterval;
+        let currentDirection = null;
+        const speed = 60; // Speed variable to control the interval duration
 
         socket.onopen = function() {
             console.log("WebSocket connection established");
@@ -50,89 +46,42 @@
             console.log("WebSocket error:", error);
         };
 
-        socket.onmessage = function(event) {
-            const message = JSON.parse(event.data);
-            grid = message.grid || grid;
-            cursors = message.cursors || cursors;
-            document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
-            
-            if (message.bomb) {
-                triggerBombAnimation(message.bomb.color);
-            } else if (message.textColor !== undefined) {
-                currentTextColor = message.textColor;
-                draw();
-            } else {
-                draw();
-            }
-        };
-
-        function triggerBombAnimation(color) {
-            currentTextColor = color;
-            draw();
-            setTimeout(() => {
-                grid = Array.from({ length: 50 }, () => Array(50).fill(null));
-                currentTextColor = 'black';
-                draw();
-                // Send the cleared grid and color reset to the server
-                socket.send(JSON.stringify({ 
-                    grid, 
-                    x, 
-                    y, 
-                    color,
-                    textColor: 'black'
-                }));
-            }, 1000);
+        function readFromServer() {
+            socket.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                grid = message.grid || grid;
+                cursors = message.cursors || cursors;
+                document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
+                draw(); // Ensure the canvas is updated with the latest data
+            };
         }
 
-        document.addEventListener('DOMContentLoaded', (event) => {
-            const coordinatesDiv = document.getElementById('coordinates');
+        // Update the writeToServer function
+        function writeToServer() {
+            let msg = {
+                grid: grid,
+                x: x,
+                y: y,
+                color: color
+            };
+            socket.send(JSON.stringify(msg));
+        }
 
-            function startMoving(direction) {
-                if (moveInterval) clearInterval(moveInterval);
-                
-                moveInterval = setInterval(() => {
-                    let moved = false;
-                    
-                    switch(direction) {
-                        case "ArrowUp":
-                            if (y > 0) { y--; moved = true; }
-                            break;
-                        case "ArrowDown":
-                            if (y < 999) { y++; moved = true; }
-                            break;
-                        case "ArrowLeft":
-                            if (x > 0) { x--; moved = true; }
-                            break;
-                        case "ArrowRight":
-                            if (x < 999) { x++; moved = true; }
-                            break;
-                    }
-                    
-                    if (moved) {
-                        updateViewport();
-                        socket.send(JSON.stringify({ grid, x, y, color }));
-                    }
-                }, speed);
-            }
-
-            // Event listeners with debouncing
-            let keyTimeout;
+        function handleUserInput() {
             document.addEventListener('keydown', (event) => {
-                if (keyTimeout) return;
-                
-                keyTimeout = setTimeout(() => {
-                    keyTimeout = null;
-                }, 16);
-
                 if (event.key.length === 1) {
                     grid[x][y] = event.key;
-                    x = Math.min(999, x + 1);
-                    socket.send(JSON.stringify({ grid, x, y, color }));
+                    x = Math.min(49, x + 1);
+                    cursors[socket.id] = { x, y, color }; // Update cursor position
+                    document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+                    writeToServer();
                 } else if (event.key === "Backspace") {
                     if (x > 0) {
                         x = Math.max(0, x - 1);
                         grid[x][y] = null;
-                        socket.send(JSON.stringify({ grid, x, y, color }));
+                        cursors[socket.id] = { x, y, color }; // Update cursor position
+                        document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+                        writeToServer();
                     }
                 } else if (event.key.startsWith("Arrow") && event.key !== currentDirection) {
                     currentDirection = event.key;
@@ -146,139 +95,96 @@
                     currentDirection = null;
                 }
             });
-
-            // Start game loop
-            animationFrameId = requestAnimationFrame(draw);
-
-            // Cleanup on page unload
-            window.addEventListener('unload', () => {
-                cancelAnimationFrame(animationFrameId);
-                clearInterval(moveInterval);
-            });
-        });
-
-        // Use RequestAnimationFrame for smooth animation
-        let animationFrameId;
-        const FPS = 60;
-        const frameDelay = 1000 / FPS;
-        let lastFrameTime = 0;
-
-        // Viewport settings
-        const squareSize = 10;
-
-        // Movement state
-        let moveInterval;
-        let currentDirection = null;
-        const speed = 16; // ~60fps
-
-        // Canvas context (store reference)
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d', { alpha: false }); // Disable alpha for better performance
-        ctx.font = '10px monospace';
-
-        function updateViewport() {
-            // Horizontal scrolling with bounds checking
-            if (x >= viewportX + viewportSize - scrollMargin) {
-                viewportX = Math.min(x - viewportSize + scrollMargin + 1, 1000 - viewportSize);
-            } else if (x <= viewportX + scrollMargin) {
-                viewportX = Math.max(x - scrollMargin - 1, 0);
-            }
-
-            // Vertical scrolling with bounds checking
-            if (y >= viewportY + viewportSize - scrollMargin) {
-                viewportY = Math.min(y - viewportSize + scrollMargin + 1, 1000 - viewportSize);
-            } else if (y <= viewportY + scrollMargin) {
-                viewportY = Math.max(y - scrollMargin - 1, 0);
-            }
         }
 
-        // Constants for performance
-        const SPEED = 8;  // Reduced from 16 to 8ms for faster cursor response
-        const FPS = 60;
-        const frameDelay = 1000 / FPS;
+        function update() {
+            readFromServer();
+        }
 
-        // Canvas setup with white background
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d', { alpha: false });
-        ctx.font = '10px monospace';
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        document.addEventListener('DOMContentLoaded', (event) => {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const coordinatesDiv = document.getElementById('coordinates');
+            const squareSize = 10;
 
-        function draw(timestamp) {
-            if (timestamp - lastFrameTime < frameDelay) {
-                requestAnimationFrame(draw);
-                return;
+            handleUserInput();
+
+            function gameLoop() {
+                update();
+                draw();
+                requestAnimationFrame(gameLoop);
             }
-            lastFrameTime = timestamp;
 
-            // Clear with white background
-            ctx.fillStyle = 'white';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw grid content more efficiently
-            ctx.fillStyle = currentTextColor;
-            const endX = Math.min(viewportX + viewportSize, 1000);
-            const endY = Math.min(viewportY + viewportSize, 1000);
-            
-            for (let i = viewportX; i < endX; i++) {
-                for (let j = viewportY; j < endY; j++) {
-                    if (grid[i] && grid[i][j]) {
-                        ctx.fillText(grid[i][j], 
-                            (i - viewportX) * squareSize, 
-                            (j - viewportY) * squareSize + 10);
+            gameLoop();
+        });
+
+        function draw() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const coordinatesDiv = document.getElementById('coordinates');
+            const squareSize = 10;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '10px monospace';
+            for (let i = 0; i < 50; i++) {
+                for (let j = 0; j < 50; j++) {
+                    if (grid[i][j]) {
+                        ctx.fillText(grid[i][j], i * squareSize, j * squareSize + 10);
                     }
                 }
             }
-            
-            // Draw cursors
             for (const key in cursors) {
                 const cursor = cursors[key];
-                const relativeX = cursor.x - viewportX;
-                const relativeY = cursor.y - viewportY;
-                
-                if (relativeX >= 0 && relativeX < viewportSize && 
-                    relativeY >= 0 && relativeY < viewportSize) {
-                    ctx.fillStyle = cursor.color;
-                    ctx.fillRect(
-                        relativeX * squareSize, 
-                        relativeY * squareSize, 
-                        squareSize, 
-                        squareSize
-                    );
-                }
+                ctx.fillStyle = cursor.color;
+                ctx.fillRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
+                ctx.strokeStyle = 'black';
+                ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
             }
-            requestAnimationFrame(draw);
+            coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
         }
 
-        // Optimize movement handling
         function startMoving(direction) {
             if (moveInterval) clearInterval(moveInterval);
-            
-            const move = () => {
-                let moved = false;
+            switch(direction) {
+                case "ArrowUp":
+                    y = Math.max(0, y - 1);
+                    break;
+                case "ArrowDown":
+                    y = Math.min(49, y + 1);
+                    break;
+                case "ArrowLeft":
+                    x = Math.max(0, x - 1);
+                    break;
+                case "ArrowRight":
+                    x = Math.min(49, x + 1);
+                    break;
+            }
+            cursors[socket.id] = { x, y, color };
+            document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+            writeToServer();
+            draw();
+
+            moveInterval = setInterval(() => {
                 switch(direction) {
                     case "ArrowUp":
-                        if (y > 0) { y--; moved = true; }
+                        y = Math.max(0, y - 1);
                         break;
                     case "ArrowDown":
-                        if (y < 999) { y++; moved = true; }
+                        y = Math.min(49, y + 1);
                         break;
                     case "ArrowLeft":
-                        if (x > 0) { x--; moved = true; }
+                        x = Math.max(0, x - 1);
                         break;
                     case "ArrowRight":
-                        if (x < 999) { x++; moved = true; }
+                        x = Math.min(49, x + 1);
                         break;
                 }
-                
-                if (moved) {
-                    updateViewport();
-                    socket.send(JSON.stringify({ grid, x, y, color }));
-                }
-            };
-
-            move(); // Execute immediately
-            moveInterval = setInterval(move, SPEED); // Then start interval
+                cursors[socket.id] = { x, y, color };
+                document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
+                writeToServer();
+                draw();
+            }, speed);
         }
     </script>
 </body>
