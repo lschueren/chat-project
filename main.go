@@ -146,6 +146,9 @@ func detectBombSequence(grid [][]string) bool {
 }
 
 func handleBomb() {
+
+	const ExplosionSpeed = 50
+
 	// Color all letters red
 	broadcast <- Message{
 		Grid:      grid,
@@ -153,8 +156,48 @@ func handleBomb() {
 		Bomb:      &Bomb{Color: "red"},
 	}
 
-	// Wait for a second
-	time.Sleep(1 * time.Second)
+	// Wait
+	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
+
+	// Color all letters green
+	broadcast <- Message{
+		Grid:      grid,
+		TextColor: "green",
+		Bomb:      &Bomb{Color: "green"},
+	}
+
+	// Wait
+	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
+
+	// Color all letters blue
+	broadcast <- Message{
+		Grid:      grid,
+		TextColor: "blue",
+		Bomb:      &Bomb{Color: "blue"},
+	}
+
+	// Wait
+	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
+
+	// Color all letters yellow
+	broadcast <- Message{
+		Grid:      grid,
+		TextColor: "yellow",
+		Bomb:      &Bomb{Color: "yellow"},
+	}
+
+	// Wait
+	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
+
+	// Color all letters pink
+	broadcast <- Message{
+		Grid:      grid,
+		TextColor: "pink",
+		Bomb:      &Bomb{Color: "pink"},
+	}
+
+	// Wait
+	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
 
 	// Clear the grid
 	for i := range grid {
@@ -162,6 +205,8 @@ func handleBomb() {
 			grid[i][j] = ""
 		}
 	}
+	// Wait
+	time.Sleep(ExplosionSpeed * time.Millisecond)
 
 	// Broadcast the updated grid to all clients
 	broadcast <- Message{
