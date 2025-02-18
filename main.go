@@ -121,6 +121,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Inside wsHandler function, update the message handling section:
 	for {
 		var msg Message
 		err := conn.ReadJSON(&msg)
@@ -133,53 +134,52 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Log received message
-		fmt.Printf("Received message from client. Cursor at (%d, %d)\n", msg.X, msg.Y)
-		fmt.Printf("Grid content at cursor: %q\n", msg.Grid[msg.Y][msg.X])
+		fmt.Printf("Received message. Position: (%d, %d), CheckSequences: %v\n", msg.X, msg.Y, msg.CheckSequences)
 
 		grid = msg.Grid
 		cursors[conn] = Cursor{X: msg.X, Y: msg.Y, Color: cursors[conn].Color}
 		msg.Cursors = serializeCursors(cursors)
 
-		// Only check for sequences if a letter was typed/deleted
+		// Check sequences if flag is true (typing or clearing occurred)
 		if msg.CheckSequences {
+			fmt.Println("Checking all rows and columns for sequences...")
+
 			// Check all rows
-			fmt.Println("Checking all rows...")
-			for rowIdx := 0; rowIdx < len(grid); rowIdx++ {
-				row := strings.Join(grid[rowIdx], "")
-				fmt.Printf("Checking row %d: %q\n", rowIdx, row)
+			for i := 0; i < len(grid); i++ {
+				row := strings.Join(grid[i], "")
+				fmt.Printf("Checking row %d: %q\n", i, row)
 
 				if strings.Contains(row, "#bomb") {
-					fmt.Printf("Found #bomb in row %d\n", rowIdx)
+					fmt.Printf("Found #bomb in row %d\n", i)
 					go handleBomb()
-					clearSequence(grid, "#bomb", rowIdx, msg.X)
+					clearSequence(grid, "#bomb", i, msg.X)
 					break
 				} else if strings.Contains(row, "#fill") {
-					fmt.Printf("Found #fill in row %d\n", rowIdx)
+					fmt.Printf("Found #fill in row %d\n", i)
 					go handleFill()
-					clearSequence(grid, "#fill", rowIdx, msg.X)
+					clearSequence(grid, "#fill", i, msg.X)
 					break
 				}
 			}
 
 			// Check all columns
-			fmt.Println("Checking all columns...")
-			for colIdx := 0; colIdx < len(grid[0]); colIdx++ {
+			for j := 0; j < len(grid[0]); j++ {
 				var column []string
-				for rowIdx := 0; rowIdx < len(grid); rowIdx++ {
-					column = append(column, grid[rowIdx][colIdx])
+				for i := 0; i < len(grid); i++ {
+					column = append(column, grid[i][j])
 				}
 				columnStr := strings.Join(column, "")
-				fmt.Printf("Checking column %d: %q\n", colIdx, columnStr)
+				fmt.Printf("Checking column %d: %q\n", j, columnStr)
 
 				if strings.Contains(columnStr, "#bomb") {
-					fmt.Printf("Found #bomb in column %d\n", colIdx)
+					fmt.Printf("Found #bomb in column %d\n", j)
 					go handleBomb()
-					clearSequence(grid, "#bomb", msg.Y, colIdx)
+					clearSequence(grid, "#bomb", msg.Y, j)
 					break
 				} else if strings.Contains(columnStr, "#fill") {
-					fmt.Printf("Found #fill in column %d\n", colIdx)
+					fmt.Printf("Found #fill in column %d\n", j)
 					go handleFill()
-					clearSequence(grid, "#fill", msg.Y, colIdx)
+					clearSequence(grid, "#fill", msg.Y, j)
 					break
 				}
 			}
@@ -237,17 +237,17 @@ func handleFill() {
 }
 
 func handleBomb() {
-
 	const ExplosionSpeed = 50
+	savedCursors := cursors // Save cursor positions
 
 	// Color all letters red
 	broadcast <- Message{
 		Grid:      grid,
 		TextColor: "red",
 		Bomb:      &Bomb{Color: "red"},
+		Cursors:   serializeCursors(savedCursors), // Keep cursors
 	}
 
-	// Wait
 	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
 
 	// Color all letters green
@@ -255,53 +255,22 @@ func handleBomb() {
 		Grid:      grid,
 		TextColor: "green",
 		Bomb:      &Bomb{Color: "green"},
+		Cursors:   serializeCursors(savedCursors), // Keep cursors
 	}
 
-	// Wait
-	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
+	// ... other color changes ...
 
-	// Color all letters blue
-	broadcast <- Message{
-		Grid:      grid,
-		TextColor: "blue",
-		Bomb:      &Bomb{Color: "blue"},
-	}
-
-	// Wait
-	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
-
-	// Color all letters yellow
-	broadcast <- Message{
-		Grid:      grid,
-		TextColor: "yellow",
-		Bomb:      &Bomb{Color: "yellow"},
-	}
-
-	// Wait
-	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
-
-	// Color all letters pink
-	broadcast <- Message{
-		Grid:      grid,
-		TextColor: "pink",
-		Bomb:      &Bomb{Color: "pink"},
-	}
-
-	// Wait
-	time.Sleep(time.Duration(ExplosionSpeed) * time.Millisecond)
-
-	// Clear the grid
+	// Clear the grid but keep cursors
 	for i := range grid {
 		for j := range grid[i] {
 			grid[i][j] = ""
 		}
 	}
-	// Wait
-	time.Sleep(ExplosionSpeed * time.Millisecond)
 
-	// Broadcast the updated grid to all clients
+	// Final broadcast with cleared grid but preserved cursors
 	broadcast <- Message{
-		Grid: grid,
+		Grid:    grid,
+		Cursors: serializeCursors(savedCursors), // Keep cursors
 	}
 }
 
