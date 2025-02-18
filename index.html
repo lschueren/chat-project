@@ -34,15 +34,13 @@
         let y = 0;
         let color = 'red';
         let cursors = {};
-        let moveInterval;
-        let currentDirection = null;
-        const speed = 50; // Speed variable to control the interval duration
         let currentTextColor = 'black'; // Add this with other global variables at the top
 
         // Add viewport variables
         let viewportX = 0;
         let viewportY = 0;
         const viewportSize = 50;
+        const scrollMargin = 10;
 
         socket.onopen = function() {
             console.log("WebSocket connection established");
@@ -68,44 +66,6 @@
             }
         };
 
-        // Modify the draw function to only show the viewport area
-        function draw(textColor = currentTextColor) {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const coordinatesDiv = document.getElementById('coordinates');
-            const squareSize = 10;
-
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.font = '10px monospace';
-            
-            // Only draw the visible portion of the grid
-            for (let i = 0; i < viewportSize; i++) {
-                for (let j = 0; j < viewportSize; j++) {
-                    const gridX = viewportX + i;
-                    const gridY = viewportY + j;
-                    if (grid[gridX] && grid[gridX][gridY]) {
-                        ctx.fillStyle = textColor;
-                        ctx.fillText(grid[gridX][gridY], i * squareSize, j * squareSize + 10);
-                    }
-                }
-            }
-
-            // Update cursor positions relative to viewport
-            for (const key in cursors) {
-                const cursor = cursors[key];
-                const relativeX = cursor.x - viewportX;
-                const relativeY = cursor.y - viewportY;
-                if (relativeX >= 0 && relativeX < viewportSize && 
-                    relativeY >= 0 && relativeY < viewportSize) {
-                    ctx.fillStyle = cursor.color;
-                    ctx.fillRect(relativeX * squareSize, relativeY * squareSize, squareSize, squareSize);
-                    ctx.strokeStyle = 'black';
-                    ctx.strokeRect(relativeX * squareSize, relativeY * squareSize, squareSize, squareSize);
-                }
-            }
-            coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-        }
-
         function triggerBombAnimation(color) {
             currentTextColor = color;
             draw();
@@ -125,41 +85,48 @@
         }
 
         document.addEventListener('DOMContentLoaded', (event) => {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
             const coordinatesDiv = document.getElementById('coordinates');
-            const squareSize = 10;
-
-            function gameLoop() {
-                draw(); // The draw function will use currentTextColor by default
-                requestAnimationFrame(gameLoop);
-            }
 
             function startMoving(direction) {
                 if (moveInterval) clearInterval(moveInterval);
+                
                 moveInterval = setInterval(() => {
+                    let moved = false;
+                    
                     switch(direction) {
                         case "ArrowUp":
-                            y = Math.max(0, y - 1);
+                            if (y > 0) { y--; moved = true; }
                             break;
                         case "ArrowDown":
-                            y = Math.min(49, y + 1);
+                            if (y < 999) { y++; moved = true; }
                             break;
                         case "ArrowLeft":
-                            x = Math.max(0, x - 1);
+                            if (x > 0) { x--; moved = true; }
                             break;
                         case "ArrowRight":
-                            x = Math.min(49, x + 1);
+                            if (x < 999) { x++; moved = true; }
                             break;
                     }
-                    socket.send(JSON.stringify({ grid, x, y, color }));
-                }, speed); // Use the speed variable to control the interval duration
+                    
+                    if (moved) {
+                        updateViewport();
+                        socket.send(JSON.stringify({ grid, x, y, color }));
+                    }
+                }, speed);
             }
 
+            // Event listeners with debouncing
+            let keyTimeout;
             document.addEventListener('keydown', (event) => {
+                if (keyTimeout) return;
+                
+                keyTimeout = setTimeout(() => {
+                    keyTimeout = null;
+                }, 16);
+
                 if (event.key.length === 1) {
                     grid[x][y] = event.key;
-                    x = Math.min(49, x + 1);
+                    x = Math.min(999, x + 1);
                     socket.send(JSON.stringify({ grid, x, y, color }));
                 } else if (event.key === "Backspace") {
                     if (x > 0) {
@@ -180,49 +147,139 @@
                 }
             });
 
-            // Add viewport movement with WASD keys
-            document.addEventListener('keydown', (event) => {
-                let moved = false;
-                switch(event.key.toLowerCase()) {
-                    case 'w':
-                        if (viewportY > 0) {
-                            viewportY--;
-                            moved = true;
-                        }
-                        break;
-                    case 's':
-                        if (viewportY < 950) {  // 1000 - viewportSize
-                            viewportY++;
-                            moved = true;
-                        }
-                        break;
-                    case 'a':
-                        if (viewportX > 0) {
-                            viewportX--;
-                            moved = true;
-                        }
-                        break;
-                    case 'd':
-                        if (viewportX < 950) {  // 1000 - viewportSize
-                            viewportX++;
-                            moved = true;
-                        }
-                        break;
-                }
-                if (moved) {
-                    socket.send(JSON.stringify({ 
-                        grid, 
-                        x, 
-                        y, 
-                        viewportX, 
-                        viewportY,
-                        color 
-                    }));
-                }
-            });
+            // Start game loop
+            animationFrameId = requestAnimationFrame(draw);
 
-            gameLoop();
+            // Cleanup on page unload
+            window.addEventListener('unload', () => {
+                cancelAnimationFrame(animationFrameId);
+                clearInterval(moveInterval);
+            });
         });
+
+        // Use RequestAnimationFrame for smooth animation
+        let animationFrameId;
+        const FPS = 60;
+        const frameDelay = 1000 / FPS;
+        let lastFrameTime = 0;
+
+        // Viewport settings
+        const squareSize = 10;
+
+        // Movement state
+        let moveInterval;
+        let currentDirection = null;
+        const speed = 16; // ~60fps
+
+        // Canvas context (store reference)
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: false }); // Disable alpha for better performance
+        ctx.font = '10px monospace';
+
+        function updateViewport() {
+            // Horizontal scrolling with bounds checking
+            if (x >= viewportX + viewportSize - scrollMargin) {
+                viewportX = Math.min(x - viewportSize + scrollMargin + 1, 1000 - viewportSize);
+            } else if (x <= viewportX + scrollMargin) {
+                viewportX = Math.max(x - scrollMargin - 1, 0);
+            }
+
+            // Vertical scrolling with bounds checking
+            if (y >= viewportY + viewportSize - scrollMargin) {
+                viewportY = Math.min(y - viewportSize + scrollMargin + 1, 1000 - viewportSize);
+            } else if (y <= viewportY + scrollMargin) {
+                viewportY = Math.max(y - scrollMargin - 1, 0);
+            }
+        }
+
+        // Constants for performance
+        const SPEED = 8;  // Reduced from 16 to 8ms for faster cursor response
+        const FPS = 60;
+        const frameDelay = 1000 / FPS;
+
+        // Canvas setup with white background
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.font = '10px monospace';
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        function draw(timestamp) {
+            if (timestamp - lastFrameTime < frameDelay) {
+                requestAnimationFrame(draw);
+                return;
+            }
+            lastFrameTime = timestamp;
+
+            // Clear with white background
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid content more efficiently
+            ctx.fillStyle = currentTextColor;
+            const endX = Math.min(viewportX + viewportSize, 1000);
+            const endY = Math.min(viewportY + viewportSize, 1000);
+            
+            for (let i = viewportX; i < endX; i++) {
+                for (let j = viewportY; j < endY; j++) {
+                    if (grid[i] && grid[i][j]) {
+                        ctx.fillText(grid[i][j], 
+                            (i - viewportX) * squareSize, 
+                            (j - viewportY) * squareSize + 10);
+                    }
+                }
+            }
+            
+            // Draw cursors
+            for (const key in cursors) {
+                const cursor = cursors[key];
+                const relativeX = cursor.x - viewportX;
+                const relativeY = cursor.y - viewportY;
+                
+                if (relativeX >= 0 && relativeX < viewportSize && 
+                    relativeY >= 0 && relativeY < viewportSize) {
+                    ctx.fillStyle = cursor.color;
+                    ctx.fillRect(
+                        relativeX * squareSize, 
+                        relativeY * squareSize, 
+                        squareSize, 
+                        squareSize
+                    );
+                }
+            }
+            requestAnimationFrame(draw);
+        }
+
+        // Optimize movement handling
+        function startMoving(direction) {
+            if (moveInterval) clearInterval(moveInterval);
+            
+            const move = () => {
+                let moved = false;
+                switch(direction) {
+                    case "ArrowUp":
+                        if (y > 0) { y--; moved = true; }
+                        break;
+                    case "ArrowDown":
+                        if (y < 999) { y++; moved = true; }
+                        break;
+                    case "ArrowLeft":
+                        if (x > 0) { x--; moved = true; }
+                        break;
+                    case "ArrowRight":
+                        if (x < 999) { x++; moved = true; }
+                        break;
+                }
+                
+                if (moved) {
+                    updateViewport();
+                    socket.send(JSON.stringify({ grid, x, y, color }));
+                }
+            };
+
+            move(); // Execute immediately
+            moveInterval = setInterval(move, SPEED); // Then start interval
+        }
     </script>
 </body>
 </html>

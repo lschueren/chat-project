@@ -22,17 +22,15 @@ var grid = make([][]string, 1000) // Change from 50 to 1000
 var cursors = make(map[*websocket.Conn]Cursor)
 var port = 8080
 
-var viewportX = 0
-var viewportY = 0
-var viewportSize = 50 // Size of the visible area
+// Add message buffer to reduce broadcasts
+const messageBufferSize = 10
+
+var messageBuffer = make(chan Message, messageBufferSize)
 
 type Message struct {
 	Grid             [][]string        `json:"grid"`
 	X                int               `json:"x"`
 	Y                int               `json:"y"`
-	ViewportX        int               `json:"viewportX"`
-	ViewportY        int               `json:"viewportY"`
-	ViewportSize     int               `json:"viewportSize"`
 	Color            string            `json:"color"`
 	TextColor        string            `json:"textColor,omitempty"`
 	Cursors          map[string]Cursor `json:"cursors"`
@@ -103,6 +101,29 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use buffered channel for cursor updates
+	cursorUpdates := make(chan Message, 10)
+	defer close(cursorUpdates)
+
+	// Handle cursor updates in separate goroutine
+	go func() {
+		ticker := time.NewTicker(16 * time.Millisecond)
+		defer ticker.Stop()
+
+		var lastUpdate Message
+		for {
+			select {
+			case update := <-cursorUpdates:
+				lastUpdate = update
+			case <-ticker.C:
+				if lastUpdate.Grid != nil {
+					broadcast <- lastUpdate
+					lastUpdate = Message{}
+				}
+			}
+		}
+	}()
+
 	for {
 		var msg Message
 		err := conn.ReadJSON(&msg)
@@ -115,40 +136,71 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		grid = msg.Grid
-		cursors[conn] = Cursor{X: msg.X, Y: msg.Y, Color: cursors[conn].Color} // Preserve the original color
+		cursors[conn] = Cursor{X: msg.X, Y: msg.Y, Color: cursors[conn].Color}
 		msg.Cursors = serializeCursors(cursors)
-		broadcast <- msg
 
-		// Check for sequences
-		if detectBombSequence(grid) {
-			fmt.Println("Bomb detected in the grid")
-			go handleBomb()
-		} else if detectFillSequence(grid) {
-			fmt.Println("Fill sequence detected in the grid")
-			go handleFill()
+		// Send update to buffer instead of directly to broadcast
+		cursorUpdates <- msg
+
+		// Check sequences only when needed
+		if strings.Contains(msg.Grid[msg.X][msg.Y], "#") {
+			if detectBombSequence(grid, msg.X, msg.Y) {
+				go handleBomb()
+			} else if detectFillSequence(grid) {
+				go handleFill()
+			}
 		}
 	}
 }
 
-func detectBombSequence(grid [][]string) bool {
+// Helper functions for min/max (Go < 1.21)
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func detectBombSequence(grid [][]string, x, y int) bool {
 	sequence := "#bomb"
-	// Check rows
-	for i := range grid {
-		row := strings.Join(grid[i], "")
-		fmt.Println("Checking row:", row) // Debugging statement
-		if strings.Contains(row, sequence) {
+	// Use string builder for better performance
+	var sb strings.Builder
+
+	// Only check recent changes around cursor position
+	startX := max(0, x-25)
+	endX := min(len(grid), x+25)
+	startY := max(0, y-25)
+	endY := min(len(grid[0]), y+25)
+
+	// Check rows in viewport
+	for i := startX; i < endX; i++ {
+		sb.Reset()
+		for j := startY; j < endY; j++ {
+			if grid[i][j] != "" {
+				sb.WriteString(grid[i][j])
+			}
+		}
+		if strings.Contains(sb.String(), sequence) {
 			return true
 		}
 	}
-	// Check columns
-	for j := 0; j < len(grid[0]); j++ {
-		var column []string
-		for i := 0; i < len(grid); i++ {
-			column = append(column, grid[i][j])
+
+	// Check columns in viewport
+	for j := startY; j < endY; j++ {
+		sb.Reset()
+		for i := startX; i < endX; i++ {
+			if grid[i][j] != "" {
+				sb.WriteString(grid[i][j])
+			}
 		}
-		columnStr := strings.Join(column, "")
-		fmt.Println("Checking column:", columnStr) // Debugging statement
-		if strings.Contains(columnStr, sequence) {
+		if strings.Contains(sb.String(), sequence) {
 			return true
 		}
 	}
@@ -158,14 +210,16 @@ func detectBombSequence(grid [][]string) bool {
 // Add new function to detect fill sequence
 func detectFillSequence(grid [][]string) bool {
 	sequence := "#fill"
-	// Check rows
-	for i := range grid {
+	// Check rows only within viewport
+	for i := 0; i < len(grid); i++ {
+		// Only join the viewport portion of the row
 		row := strings.Join(grid[i], "")
 		if strings.Contains(row, sequence) {
 			return true
 		}
 	}
-	// Check columns
+
+	// Check columns only within viewport
 	for j := 0; j < len(grid[0]); j++ {
 		var column []string
 		for i := 0; i < len(grid); i++ {
@@ -181,61 +235,40 @@ func detectFillSequence(grid [][]string) bool {
 // Add new function to handle fill action
 func handleFill() {
 	const FillSpeed = 50
+	patterns := []string{"█", "▒", "░", " "}
 
-	// RPG-style patterns
-	patterns := []string{
-		"█", // Full block (mountains/walls)
-		"▒", // Medium shade (grass/trees)
-		"░", // Light shade (sand/paths)
-		" ", // Empty space (clearings)
+	// Pre-calculate random values for better performance
+	randomVals := make([]float64, 1000)
+	for i := range randomVals {
+		randomVals[i] = rand.Float64()
 	}
 
-	// Fill the entire 1000x1000 grid
-	for i := range grid {
-		for j := range grid[i] {
-			// Adjust position calculations for larger grid
-			if i > 800 { // Bottom 20% - mountains
-				grid[i][j] = patterns[rand.Intn(2)]
-			} else if i < 200 { // Top 20% - sky
-				grid[i][j] = patterns[rand.Intn(2)+2]
-			} else { // Middle area
-				if rand.Float64() < 0.3 {
-					pattern := patterns[rand.Intn(len(patterns))]
-					grid[i][j] = pattern
-					if j > 0 && rand.Float64() < 0.7 {
-						grid[i][j-1] = pattern
+	// Fill grid in chunks
+	chunkSize := 100
+	for chunk := 0; chunk < 1000; chunk += chunkSize {
+		for i := chunk; i < min(chunk+chunkSize, 1000); i++ {
+			for j := 0; j < 1000; j++ {
+				switch {
+				case i > 800:
+					grid[i][j] = patterns[rand.Intn(2)]
+				case i < 200:
+					grid[i][j] = patterns[rand.Intn(2)+2]
+				default:
+					if randomVals[i] < 0.3 {
+						pattern := patterns[rand.Intn(len(patterns))]
+						grid[i][j] = pattern
+					} else {
+						grid[i][j] = patterns[rand.Intn(len(patterns))]
 					}
-					if i > 0 && rand.Float64() < 0.7 {
-						grid[i-1][j] = pattern
-					}
-				} else {
-					grid[i][j] = patterns[rand.Intn(len(patterns))]
 				}
 			}
 		}
-	}
 
-	// Retro color sequence (landscape colors)
-	colors := []string{
-		"#2F4F4F", // Dark slate gray (base)
-		"#228B22", // Forest green
-		"#8B4513", // Saddle brown
-		"#4B0082", // Indigo
-		"#483D8B", // Dark slate blue
-	}
-
-	for _, color := range colors {
+		// Broadcast chunk update
 		broadcast <- Message{
 			Grid:      grid,
-			TextColor: color,
+			TextColor: "#2F4F4F",
 		}
-		time.Sleep(time.Duration(FillSpeed) * time.Millisecond)
-	}
-
-	// Set final color to forest green for landscape feel
-	broadcast <- Message{
-		Grid:      grid,
-		TextColor: "#228B22",
 	}
 }
 
@@ -309,17 +342,26 @@ func handleBomb() {
 }
 
 func handleMessages() {
+	var lastMsg Message
+	ticker := time.NewTicker(16 * time.Millisecond) // ~60fps
+	defer ticker.Stop()
+
 	for {
-		msg := <-broadcast
-		msg.ConnectedClients = len(clients)
-		for client := range clients {
-			err := client.WriteJSON(msg)
-			if err != nil {
-				fmt.Println("WriteJSON error:", err)
-				client.Close()
-				delete(clients, client)
-				delete(cursors, client)
-				broadcastClientCount()
+		select {
+		case msg := <-broadcast:
+			lastMsg = msg
+		case <-ticker.C:
+			if lastMsg.Grid != nil {
+				lastMsg.ConnectedClients = len(clients)
+				for client := range clients {
+					err := client.WriteJSON(lastMsg)
+					if err != nil {
+						client.Close()
+						delete(clients, client)
+						delete(cursors, client)
+					}
+				}
+				lastMsg = Message{} // Reset last message
 			}
 		}
 	}
