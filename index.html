@@ -36,7 +36,15 @@
         let cursors = {};
         let moveInterval;
         let currentDirection = null;
-        const speed = 60; // Speed variable to control the interval duration
+        const speed = 150;  // Increase delay between moves (was 60)
+        let lastSpaceTime = 0;
+        const spaceDelay = 150;  // Match space delay to movement speed
+        let moveTimeout = null;  // For debouncing movement
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const coordinatesDiv = document.getElementById('coordinates');
+        const squareSize = 10;
 
         socket.onopen = function() {
             console.log("WebSocket connection established");
@@ -51,9 +59,16 @@
             socket.onmessage = function(event) {
                 const message = JSON.parse(event.data);
                 grid = message.grid || grid;
-                cursors = message.cursors || cursors;
-                document.getElementById('connectedClients').textContent = "Connected Clients: " + (message.connectedClients || 0);
-                // Remove draw() call from here
+                // Update cursors except our own
+                for (const key in message.cursors) {
+                    if (key !== socket.id) {
+                        cursors[key] = message.cursors[key];
+                    }
+                }
+                // Keep our own cursor position
+                cursors[socket.id] = { x, y, color };
+                document.getElementById('connectedClients').textContent = 
+                    "Connected Clients: " + (message.connectedClients || 0);
             };
         }
 
@@ -63,27 +78,43 @@
                 grid: grid,
                 x: x,
                 y: y,
-                color: color
+                color: color,
+                checkSequences: false  // default to false
             };
+            
+            // Update local cursor immediately
+            cursors[socket.id] = { x, y, color };
+            
             socket.send(JSON.stringify(msg));
         }
 
+        // Update the handleUserInput function
         function handleUserInput() {
             document.addEventListener('keydown', (event) => {
                 if (event.key.length === 1) {
+                    // Single character input
                     grid[x][y] = event.key;
-                    x = Math.min(49, x + 1);
-                    cursors[socket.id] = { x, y, color }; // Update cursor position
-                    document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-                    writeToServer();
+                    let newX = Math.min(49, x + 1);
+                    x = newX;
+                    cursors[socket.id] = { x, y, color };
+                    writeToServerWithCheck();  // Use new function for letter input
                 } else if (event.key === "Backspace") {
                     if (x > 0) {
                         x = Math.max(0, x - 1);
                         grid[x][y] = null;
-                        cursors[socket.id] = { x, y, color }; // Update cursor position
-                        document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-                        writeToServer();
+                        cursors[socket.id] = { x, y, color };
+                        writeToServerWithCheck();  // Use new function for backspace
                     }
+                } else if (event.key === " ") {
+                    const now = Date.now();
+                    if (now - lastSpaceTime >= spaceDelay) {
+                        lastSpaceTime = now;
+                        grid[x][y] = null;
+                        x = Math.min(49, x + 1);
+                        cursors[socket.id] = { x, y, color };
+                        writeToServerWithCheck();  // Use new function for space
+                    }
+                    event.preventDefault();
                 } else if (event.key.startsWith("Arrow") && event.key !== currentDirection) {
                     currentDirection = event.key;
                     startMoving(event.key);
@@ -98,35 +129,34 @@
             });
         }
 
+        // New function for sending updates that should check sequences
+        function writeToServerWithCheck() {
+            let msg = {
+                grid: grid,
+                x: x,
+                y: y,
+                color: color,
+                checkSequences: true  // Set to true for letter modifications
+            };
+            
+            cursors[socket.id] = { x, y, color };
+            socket.send(JSON.stringify(msg));
+        }
+
         function update() {
             readFromServer();
         }
 
         document.addEventListener('DOMContentLoaded', (event) => {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const coordinatesDiv = document.getElementById('coordinates');
-            const squareSize = 10;
-
             handleUserInput();
-
-            // Make sure the gameLoop is the only place calling draw()
-            function gameLoop() {
-                update();
-                draw(); // This is now the only place where draw() is called
-                requestAnimationFrame(gameLoop);
-            }
-
             gameLoop();
         });
 
         function draw() {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const coordinatesDiv = document.getElementById('coordinates');
-            const squareSize = 10;
-
+            // Clear
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
             ctx.fillStyle = 'black';
             ctx.font = '10px monospace';
             for (let i = 0; i < 50; i++) {
@@ -136,6 +166,8 @@
                     }
                 }
             }
+            
+            // Draw cursors
             for (const key in cursors) {
                 const cursor = cursors[key];
                 ctx.fillStyle = cursor.color;
@@ -143,51 +175,55 @@
                 ctx.strokeStyle = 'black';
                 ctx.strokeRect(cursor.x * squareSize, cursor.y * squareSize, squareSize, squareSize);
             }
-            coordinatesDiv.textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
         }
 
         // Update startMoving function
         function startMoving(direction) {
-            if (moveInterval) clearInterval(moveInterval);
-            switch(direction) {
-                case "ArrowUp":
-                    y = Math.max(0, y - 1);
-                    break;
-                case "ArrowDown":
-                    y = Math.min(49, y + 1);
-                    break;
-                case "ArrowLeft":
-                    x = Math.max(0, x - 1);
-                    break;
-                case "ArrowRight":
-                    x = Math.min(49, x + 1);
-                    break;
+            if (moveInterval) {
+                clearInterval(moveInterval);
+                moveInterval = null;
             }
-            cursors[socket.id] = { x, y, color };
-            document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-            writeToServer();
-            // Remove draw() call from here
+            
+            // Clear any pending movement
+            if (moveTimeout) {
+                clearTimeout(moveTimeout);
+                moveTimeout = null;
+            }
 
-            moveInterval = setInterval(() => {
+            function move() {
+                let newX = x;
+                let newY = y;
+                
                 switch(direction) {
-                    case "ArrowUp":
-                        y = Math.max(0, y - 1);
-                        break;
-                    case "ArrowDown":
-                        y = Math.min(49, y + 1);
-                        break;
-                    case "ArrowLeft":
-                        x = Math.max(0, x - 1);
-                        break;
-                    case "ArrowRight":
-                        x = Math.min(49, x + 1);
-                        break;
+                    case "ArrowUp":    newY = Math.max(0, y - 1); break;
+                    case "ArrowDown":  newY = Math.min(49, y + 1); break;
+                    case "ArrowLeft":  newX = Math.max(0, x - 1); break;
+                    case "ArrowRight": newX = Math.min(49, x + 1); break;
                 }
-                cursors[socket.id] = { x, y, color };
-                document.getElementById('coordinates').textContent = "Cursor Coordinates: (" + x + ", " + y + ")";
-                writeToServer();
-                // Remove draw() call from here
-            }, speed);
+
+                // Only update if position actually changed
+                if (newX !== x || newY !== y) {
+                    x = newX;
+                    y = newY;
+                    // Use timeout to ensure server has time to process
+                    moveTimeout = setTimeout(() => {
+                        writeToServer();
+                        moveTimeout = null;
+                    }, 16);  // Roughly one frame
+                }
+            }
+
+            // Initial move
+            move();
+
+            // Setup interval for continuous movement
+            moveInterval = setInterval(move, speed);
+        }
+
+        function gameLoop() {
+            update();     // First update state
+            draw();       // Then draw the current state
+            requestAnimationFrame(gameLoop);
         }
     </script>
 </body>

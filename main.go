@@ -32,6 +32,7 @@ type Message struct {
 	ConnectedClients int               `json:"connectedClients"`
 	Bomb             *Bomb             `json:"bomb,omitempty"`
 	Sequence         string            `json:"sequence,omitempty"`
+	CheckSequences   bool              `json:"checkSequences,omitempty"`
 }
 
 type Cursor struct {
@@ -139,45 +140,48 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		cursors[conn] = Cursor{X: msg.X, Y: msg.Y, Color: cursors[conn].Color}
 		msg.Cursors = serializeCursors(cursors)
 
-		// Check all rows
-		fmt.Println("Checking all rows...")
-		for rowIdx := 0; rowIdx < len(grid); rowIdx++ {
-			row := strings.Join(grid[rowIdx], "")
-			fmt.Printf("Checking row %d: %q\n", rowIdx, row)
-
-			if strings.Contains(row, "#bomb") {
-				fmt.Printf("Found #bomb in row %d\n", rowIdx)
-				go handleBomb()
-				clearSequence(grid, "#bomb", rowIdx, msg.X)
-				break
-			} else if strings.Contains(row, "#fill") {
-				fmt.Printf("Found #fill in row %d\n", rowIdx)
-				go handleFill()
-				clearSequence(grid, "#fill", rowIdx, msg.X)
-				break
-			}
-		}
-
-		// Check all columns
-		fmt.Println("Checking all columns...")
-		for colIdx := 0; colIdx < len(grid[0]); colIdx++ {
-			var column []string
+		// Only check for sequences if a letter was typed/deleted
+		if msg.CheckSequences {
+			// Check all rows
+			fmt.Println("Checking all rows...")
 			for rowIdx := 0; rowIdx < len(grid); rowIdx++ {
-				column = append(column, grid[rowIdx][colIdx])
-			}
-			columnStr := strings.Join(column, "")
-			fmt.Printf("Checking column %d: %q\n", colIdx, columnStr)
+				row := strings.Join(grid[rowIdx], "")
+				fmt.Printf("Checking row %d: %q\n", rowIdx, row)
 
-			if strings.Contains(columnStr, "#bomb") {
-				fmt.Printf("Found #bomb in column %d\n", colIdx)
-				go handleBomb()
-				clearSequence(grid, "#bomb", msg.Y, colIdx)
-				break
-			} else if strings.Contains(columnStr, "#fill") {
-				fmt.Printf("Found #fill in column %d\n", colIdx)
-				go handleFill()
-				clearSequence(grid, "#fill", msg.Y, colIdx)
-				break
+				if strings.Contains(row, "#bomb") {
+					fmt.Printf("Found #bomb in row %d\n", rowIdx)
+					go handleBomb()
+					clearSequence(grid, "#bomb", rowIdx, msg.X)
+					break
+				} else if strings.Contains(row, "#fill") {
+					fmt.Printf("Found #fill in row %d\n", rowIdx)
+					go handleFill()
+					clearSequence(grid, "#fill", rowIdx, msg.X)
+					break
+				}
+			}
+
+			// Check all columns
+			fmt.Println("Checking all columns...")
+			for colIdx := 0; colIdx < len(grid[0]); colIdx++ {
+				var column []string
+				for rowIdx := 0; rowIdx < len(grid); rowIdx++ {
+					column = append(column, grid[rowIdx][colIdx])
+				}
+				columnStr := strings.Join(column, "")
+				fmt.Printf("Checking column %d: %q\n", colIdx, columnStr)
+
+				if strings.Contains(columnStr, "#bomb") {
+					fmt.Printf("Found #bomb in column %d\n", colIdx)
+					go handleBomb()
+					clearSequence(grid, "#bomb", msg.Y, colIdx)
+					break
+				} else if strings.Contains(columnStr, "#fill") {
+					fmt.Printf("Found #fill in column %d\n", colIdx)
+					go handleFill()
+					clearSequence(grid, "#fill", msg.Y, colIdx)
+					break
+				}
 			}
 		}
 
@@ -191,54 +195,6 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func detectBombSequence(grid [][]string, x, y int) bool {
-	sequence := "#bomb"
-
-	// Check row
-	row := strings.Join(grid[y], "")
-	if strings.Contains(row, sequence) {
-		fmt.Printf("Found #bomb in row %d: %s\n", y, row)
-		return true
-	}
-
-	// Check column
-	var column []string
-	for i := 0; i < len(grid); i++ {
-		column = append(column, grid[i][x])
-	}
-	columnStr := strings.Join(column, "")
-	if strings.Contains(columnStr, sequence) {
-		fmt.Printf("Found #bomb in column %d: %s\n", x, columnStr)
-		return true
-	}
-
-	return false
-}
-
-func detectFillSequence(grid [][]string, x, y int) bool {
-	sequence := "#fill"
-
-	// Check row
-	row := strings.Join(grid[y], "")
-	if strings.Contains(row, sequence) {
-		fmt.Printf("Found #fill in row %d: %s\n", y, row)
-		return true
-	}
-
-	// Check column
-	var column []string
-	for i := 0; i < len(grid); i++ {
-		column = append(column, grid[i][x])
-	}
-	columnStr := strings.Join(column, "")
-	if strings.Contains(columnStr, sequence) {
-		fmt.Printf("Found #fill in column %d: %s\n", x, columnStr)
-		return true
-	}
-
-	return false
 }
 
 func handleFill() {
