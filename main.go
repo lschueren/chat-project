@@ -162,7 +162,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Check all columns
+			/* // Check all columns
 			for j := 0; j < len(grid[0]); j++ {
 				var column []string
 				for i := 0; i < len(grid); i++ {
@@ -182,7 +182,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 					clearSequence(grid, "#fill", msg.Y, j)
 					break
 				}
-			}
+			}*/
 		}
 
 		cursorUpdates <- msg
