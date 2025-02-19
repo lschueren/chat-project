@@ -234,6 +234,8 @@ func handleFill() {
 			TextColor: "#2F4F4F",
 		}
 	}
+
+	fmt.Println("Fill pattern completed and broadcast") // Debug log
 }
 
 func handleBomb() {
@@ -296,6 +298,9 @@ func handleMessages() {
 				}
 				lastMsg = Message{} // Reset last message
 			}
+		case <-ticker.C:
+			// Keep the ticker for potential future use
+			continue
 		}
 	}
 }
@@ -316,9 +321,14 @@ func broadcastClientCount() {
 		err := client.WriteJSON(msg)
 		if err != nil {
 			fmt.Println("WriteJSON error:", err)
+
+			// Remove client safely
 			client.Close()
 			delete(clients, client)
 			delete(cursors, client)
+
+			// Update client count
+			broadcastClientCount()
 		}
 	}
 }
